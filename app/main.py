@@ -67,17 +67,23 @@ def create_simulation(req: CreateSimulationRequest):
     sim_id = uuid.uuid4().hex
     storage_key = f"{sim_id}.html"
 
-    resp = httpx.post(
-        f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{storage_key}",
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "text/html; charset=utf-8",
-        },
-        content=html_bytes,
-        timeout=30,
-    )
-    if not resp.ok:
+    try:
+        resp = httpx.post(
+            f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{storage_key}",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "text/html; charset=utf-8",
+            },
+            content=html_bytes,
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        # A connection-level failure (bad SUPABASE_URL, DNS, timeout) raises here
+        # rather than returning a response -- surface the real cause instead of
+        # letting FastAPI's default 500 ("Internal Server Error") mask it.
+        raise HTTPException(502, f"could not reach Supabase Storage: {exc!r}")
+    if not resp.is_success:
         raise HTTPException(502, f"storage upload failed ({resp.status_code}): {resp.text}")
 
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{storage_key}"
