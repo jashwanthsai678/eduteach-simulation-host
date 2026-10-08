@@ -18,12 +18,16 @@ re-serves them itself with the correct content-type and no restrictive CSP.
 import os
 import re
 import uuid
+from pathlib import Path
+from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -31,6 +35,9 @@ load_dotenv()
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 STORAGE_BUCKET = os.environ.get("SIMULATION_BUCKET", "simulations")
+# Separate bucket from simulations -- different content type (PDF, not HTML),
+# different lifecycle. Same Supabase project, must also be created+public.
+PREP_SHEET_BUCKET = os.environ.get("PREP_SHEET_BUCKET", "prep-sheets")
 # This service's own public URL, used to build the link handed back to the
 # caller -- deliberately NOT Supabase's own storage URL, since that's the
 # version with the broken content-type/CSP (see module docstring).
@@ -41,6 +48,12 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://eduteach-simulation
 _MAX_HTML_BYTES = 300_000
 
 _DOCTYPE_RE = re.compile(r"<\s*html[\s>]", re.IGNORECASE)
+
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_jinja_env = Environment(
+    loader=FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=select_autoescape(["html", "jinja"]),
+)
 
 app = FastAPI(title="EduTeach Simulation Host")
 app.add_middleware(
@@ -56,6 +69,48 @@ class CreateSimulationRequest(BaseModel):
 
 
 class CreateSimulationResponse(BaseModel):
+    id: str
+    url: str
+
+
+class PrepImage(BaseModel):
+    url: str
+    caption: Optional[str] = None
+
+
+class PrepWatchFor(BaseModel):
+    text: str = Field(..., description="The likely misconception/mistake.")
+    fix: str = Field(..., description="One-line way to catch or correct it.")
+
+
+class PrepSection(BaseModel):
+    title: str
+    minutes: Optional[int] = None
+    bullets: list[str] = Field(..., min_length=1)
+    # At most one of these is expected to be set -- `image` for a single
+    # illustrative image (e.g. Concept), `images` for several (e.g. Challenge).
+    image: Optional[PrepImage] = None
+    images: Optional[list[PrepImage]] = None
+    watch: Optional[PrepWatchFor] = None
+
+
+class PrepSheetRequest(BaseModel):
+    """The 6-bucket lesson prep sheet. `refresher` and `real_life` are
+    optional (omit if there's no previous lesson, or no real-life tie-in);
+    `concept`, `challenge`, `level_set`, `explore` are always expected."""
+
+    topic: str
+    goal: Optional[str] = Field(None, description="One-line lesson objective.")
+    floor: Optional[str] = Field(None, description="The weakest-child path/fallback.")
+    refresher: Optional[PrepSection] = None
+    concept: PrepSection
+    real_life: Optional[PrepSection] = None
+    challenge: PrepSection
+    level_set: PrepSection
+    explore: PrepSection
+
+
+class CreatePrepSheetResponse(BaseModel):
     id: str
     url: str
 
@@ -122,3 +177,86 @@ def serve_simulation(sim_id: str):
     if not resp.is_success:
         raise HTTPException(502, f"storage fetch failed ({resp.status_code}): {resp.text}")
     return Response(content=resp.content, media_type="text/html")
+
+
+def _render_prep_sheet_html(req: PrepSheetRequest) -> str:
+    template = _jinja_env.get_template("prep_sheet.html.jinja")
+    return template.render(
+        topic=req.topic,
+        goal=req.goal,
+        floor=req.floor,
+        refresher=req.refresher,
+        concept=req.concept,
+        real_life=req.real_life,
+        challenge=req.challenge,
+        level_set=req.level_set,
+        explore=req.explore,
+    )
+
+
+def _html_to_pdf(html: str) -> bytes:
+    # Fresh browser per request (not pooled) -- v1 keeps this simple; prep
+    # sheets are low-volume (one per lesson, not one per chat message), so
+    # launch/teardown cost isn't worth the complexity of a shared browser yet.
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page(viewport={"width": 480, "height": 800})
+            page.set_content(html, wait_until="networkidle")
+            # The template's height depends on how much content is in each
+            # section, so size the PDF page to the actual rendered content
+            # instead of guessing a fixed page size.
+            content_height = page.evaluate("document.body.scrollHeight")
+            return page.pdf(width="480px", height=f"{content_height}px", print_background=True)
+        finally:
+            browser.close()
+
+
+@app.post("/prep-sheets", response_model=CreatePrepSheetResponse)
+def create_prep_sheet(req: PrepSheetRequest):
+    html = _render_prep_sheet_html(req)
+
+    try:
+        pdf_bytes = _html_to_pdf(html)
+    except Exception as exc:
+        raise HTTPException(502, f"could not render prep sheet to PDF: {exc!r}")
+
+    sheet_id = uuid.uuid4().hex
+    storage_key = f"{sheet_id}.pdf"
+
+    try:
+        resp = httpx.post(
+            f"{SUPABASE_URL}/storage/v1/object/{PREP_SHEET_BUCKET}/{storage_key}",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/pdf",
+            },
+            content=pdf_bytes,
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"could not reach Supabase Storage: {exc!r}")
+    if not resp.is_success:
+        raise HTTPException(502, f"storage upload failed ({resp.status_code}): {resp.text}")
+
+    return CreatePrepSheetResponse(id=sheet_id, url=f"{PUBLIC_BASE_URL}/p/{sheet_id}")
+
+
+@app.get("/p/{sheet_id}")
+def serve_prep_sheet(sheet_id: str):
+    storage_key = f"{sheet_id}.pdf"
+    try:
+        resp = httpx.get(
+            f"{SUPABASE_URL}/storage/v1/object/public/{PREP_SHEET_BUCKET}/{storage_key}",
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"could not reach Supabase Storage: {exc!r}")
+    # Same Supabase quirk as /s/{id}: a missing object comes back as HTTP 400
+    # wrapping a NoSuchKey JSON body, not a plain 404.
+    if resp.status_code == 404 or (resp.status_code == 400 and "NoSuchKey" in resp.text):
+        raise HTTPException(404, "No prep sheet found at this link.")
+    if not resp.is_success:
+        raise HTTPException(502, f"storage fetch failed ({resp.status_code}): {resp.text}")
+    return Response(content=resp.content, media_type="application/pdf")

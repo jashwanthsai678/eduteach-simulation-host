@@ -4,6 +4,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Chromium + its OS-level deps, used to render prep sheets (HTML -> PDF).
+# --with-deps installs the apt packages Chromium needs on this base image.
+RUN playwright install --with-deps chromium
 
 COPY app/ app/
 

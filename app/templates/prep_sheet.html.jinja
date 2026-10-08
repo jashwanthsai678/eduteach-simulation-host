@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prep Sheet</title>
+<style>
+  :root {
+    --forest: #162D7C;
+    --forest-light: #A9C4A2;
+    --paper-bg: #F3F4F6;
+    --card-border: #E5E7EB;
+    --ink: #111827;
+    --ink-soft: #4B5563;
+    --ink-faint: #9CA3AF;
+    --amber: #B0771E;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: #0b0d12;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; justify-content: center;
+  }
+
+  .sheet { width: 100%; max-width: 420px; border: 2px solid var(--card-border); border-radius: 24px; overflow: hidden; }
+
+  .doc-header { background: var(--forest); padding: 16px 20px; border-bottom: 2px solid var(--card-border); }
+  .doc-header .eyebrow { display: flex; align-items: center; justify-content: space-between; }
+  .doc-header .eyebrow span { font-size: 10px; font-weight: 800; color: var(--forest-light); text-transform: uppercase; letter-spacing: .12em; }
+  .doc-header .saved { font-size: 10px; font-weight: 700; color: #1F3D2C; background: #AAD6A0; padding: 2px 9px; border-radius: 999px; }
+  .doc-header h1 { font-size: 17px; font-weight: 900; color: #fff; line-height: 1.2; margin: 2px 0 0; }
+
+  .banner { background: var(--paper-bg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+  .strip { border-radius: 12px; display: flex; align-items: center; gap: 6px; background: #fff; border: 2px solid var(--card-border); padding: 8px 11px; }
+  .strip .label { font-size: 8.5px; font-weight: 800; color: var(--forest); text-transform: uppercase; letter-spacing: .09em; flex-shrink: 0; }
+  .strip p { flex: 1; min-width: 0; margin: 0; font-size: 11.5px; color: var(--ink); line-height: 1.35; font-weight: 600; }
+
+  .section { border-radius: 16px; overflow: hidden; background: #fff; border: 2px solid var(--card-border); }
+  .section .head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1.5px solid rgba(15,23,42,0.1); }
+  .section .icon { width: 24px; height: 24px; border-radius: 8px; background: var(--forest); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
+  .section .title { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 800; color: var(--ink); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section .minutes { flex-shrink: 0; font-size: 10.5px; font-weight: 700; color: var(--ink); border: 1.5px solid var(--card-border); padding: 1px 7px; border-radius: 999px; background: #fff; }
+  .section .chevron { width: 28px; height: 28px; border-radius: 8px; background: var(--forest); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+  .bullets { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .bullets .row { display: flex; align-items: flex-start; gap: 8px; }
+  .bullets .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--forest); margin-top: 6px; flex-shrink: 0; }
+  .bullets p { margin: 0; font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+
+  .images { padding: 0 14px 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .images .ph-img { border-radius: 10px; border: 1.5px solid var(--card-border); object-fit: cover; display: block; }
+  .images.one .ph-img { width: 100%; max-width: 260px; height: 140px; }
+  .images.many .ph-img { width: 140px; height: 140px; }
+  .images .caption { width: 100%; font-size: 9.5px; color: var(--ink-faint); margin-top: 3px; font-weight: 600; }
+
+  .watch { display: flex; align-items: flex-start; gap: 6px; border-top: 1.5px solid rgba(15,23,42,0.1); padding: 8px 14px 10px; background: rgba(176,119,30,0.06); }
+  .watch .warn { color: var(--amber); flex-shrink: 0; margin-top: 2px; font-size: 12px; }
+  .watch .label { font-size: 8.5px; font-weight: 800; color: var(--amber); text-transform: uppercase; letter-spacing: .09em; }
+  .watch .text { font-size: 11.5px; font-weight: 700; color: var(--ink); line-height: 1.35; margin: 1px 0 0; }
+  .watch .fix { font-size: 10.5px; color: var(--ink-soft); line-height: 1.4; margin: 1px 0 0; }
+
+  .meta { font-size: 10.5px; color: var(--ink-faint); font-style: italic; padding: 2px 14px 10px; }
+</style>
+</head>
+<body>
+
+{% macro render_section(section) -%}
+{% if section %}
+<div class="section">
+  <div class="head">
+    <span class="icon">&#9679;</span>
+    <span class="title">{{ section.title }}</span>
+    {% if section.minutes %}<span class="minutes">~{{ section.minutes }} min</span>{% endif %}
+    <span class="chevron">&rsaquo;</span>
+  </div>
+  <div class="bullets">
+    {% for b in section.bullets %}
+    <div class="row"><span class="dot"></span><p>{{ b }}</p></div>
+    {% endfor %}
+  </div>
+  {% if section.image %}
+  <div class="images one">
+    <img class="ph-img" src="{{ section.image.url }}" alt="">
+    {% if section.image.caption %}<p class="caption">{{ section.image.caption }}</p>{% endif %}
+  </div>
+  {% elif section.images %}
+  <div class="images many">
+    {% for img in section.images %}
+    <img class="ph-img" src="{{ img.url }}" alt="">
+    {% endfor %}
+    {% if section.images[0].caption %}<p class="caption">{{ section.images[0].caption }}</p>{% endif %}
+  </div>
+  {% endif %}
+  {% if section.watch %}
+  <div class="watch">
+    <span class="warn">&#9679;</span>
+    <div>
+      <p class="label">Watch For</p>
+      <p class="text">{{ section.watch.text }}</p>
+      <p class="fix">&rarr; {{ section.watch.fix }}</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+<div class="sheet">
+
+  <div class="doc-header">
+    <div class="eyebrow">
+      <span>Prep Sheet &middot; Overview</span>
+      <span class="saved">Saved</span>
+    </div>
+    <h1>{{ topic }}</h1>
+  </div>
+
+  <div class="banner">
+
+    {% if goal %}
+    <div class="strip">
+      <span class="label">Goal</span>
+      <p>{{ goal }}</p>
+    </div>
+    {% endif %}
+
+    {% if floor %}
+    <div class="strip">
+      <span class="label">Floor</span>
+      <p>{{ floor }}</p>
+    </div>
+    {% endif %}
+
+    {{ render_section(refresher) }}
+    {{ render_section(concept) }}
+    {{ render_section(real_life) }}
+    {{ render_section(challenge) }}
+    {{ render_section(level_set) }}
+    {{ render_section(explore) }}
+
+  </div>
+</div>
+
+</body>
+</html>
